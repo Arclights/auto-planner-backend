@@ -1,0 +1,6 @@
+applicationType: default
+defaultPackage: auto.planner
+testFramework: spock
+sourceLanguage: kotlin
+buildTool: maven
+features: [annotation-api, app-name, data, data-jpa, graalvm, graphql, http-client, jdbc-hikari, kotlin, kotlin-application, logback, maven, netty-server, openapi, postgres, readme, serialization-jackson, shade, spock, swagger-ui, test-resources, yaml]
