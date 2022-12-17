@@ -126,6 +126,13 @@
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+
+        <dependency>
+            <groupId>org.jacop</groupId>
+            <artifactId>jacop</artifactId>
+            <version>4.9.0</version>
+        </dependency>
+
         <dependency>
             <groupId>io.micronaut</groupId>
             <artifactId>micronaut-inject-groovy</artifactId>
