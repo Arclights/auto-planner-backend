@@ -2,6 +2,7 @@ package com.arclights.autoplanner.controllers
 
 import com.arclights.autoplanner.models.GanttConfig
 import com.arclights.autoplanner.models.GanttResult
+import com.arclights.autoplanner.printResult
 import com.arclights.autoplanner.services.GanttSolverService
 import io.micronaut.http.annotation.Body
 import io.micronaut.http.annotation.Controller
@@ -15,6 +16,7 @@ class GanttController(private val ganttSolverService: GanttSolverService) {
     fun calculate(@PathVariable id: String, @Body ganttConfig: GanttConfig): GanttResult {
        val res= ganttSolverService.calculate(ganttConfig)
         println(res)
+        printResult(res)
         return res
     }
 }

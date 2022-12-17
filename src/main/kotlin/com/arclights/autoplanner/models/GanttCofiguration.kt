@@ -13,7 +13,7 @@ data class ResourceAllocationConfig(val timeUnitFrom: Int, val timeUnitUntil: In
 
 @Serdeable
 data class TaskConfig(
-    val id: String?,
+    val id: String,
     val name: String,
     val length: Int,
     val timeScalar: TimeScalar?,

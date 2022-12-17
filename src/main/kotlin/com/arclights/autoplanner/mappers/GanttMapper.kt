@@ -10,13 +10,7 @@ import org.jacop.core.Store
 
 @Singleton
 class GanttMapper {
-    fun mapResult(
-        ganttConfig: GanttConfig,
-        store: Store,
-        taskToStart: Map<TaskConfig, IntVar>
-    ): GanttResult {
-        return GanttResult(mapTasks(taskToStart))
-    }
+    fun mapResult(taskToStart: Map<TaskConfig, IntVar>): GanttResult = GanttResult(mapTasks(taskToStart))
 
     private fun mapTasks(taskToStart: Map<TaskConfig, IntVar>): List<Task> =
         taskToStart.map { mapTask(it.key, it.value) }
