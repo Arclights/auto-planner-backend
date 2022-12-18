@@ -20,24 +20,26 @@ fun printResult(ganttResult: GanttResult) {
 
 fun printTask(task: Task, maxNameLength: Int, maxTimeStringLength: Int) {
     val alignmentNamePaddingSize = maxNameLength - task.name.length
-    val alignmentNamePadding = List(alignmentNamePaddingSize) { _ -> ' ' }.joinToString("")
+    val alignmentNamePadding = generatePadding(alignmentNamePaddingSize)
 
     val timeString = getTimeString(task)
     val alignmentTimeStringPaddingSize = maxTimeStringLength - timeString.length
-    val alignmentTimeStringPadding = List(alignmentTimeStringPaddingSize) { _ -> ' ' }.joinToString("")
+    val alignmentTimeStringPadding = generatePadding(alignmentTimeStringPaddingSize)
 
     val startPadding = if (task.length == 1) {
-        List(task.start) { _ -> ' ' }.joinToString("")
+        generatePadding(task.start)
     } else {
-        List(max(0, task.start)) { _ -> ' ' }.joinToString("")
+        generatePadding(max(0, task.start))
     }
 
     val taskBox = if (task.length == 1) {
         "|"
     } else {
-        List(max(0, task.length - 2)) { _ -> ' ' }.joinToString("", "[", "]")
+        "[${generatePadding(max(0, task.length - 2))}]"
     }
     println("${task.name}$alignmentNamePadding$timeString$alignmentTimeStringPadding$startPadding$taskBox")
 }
 
 fun getTimeString(task: Task) = " ${task.length} ${task.start}-${task.start + task.length - 1} "
+
+fun generatePadding(length: Int) = List(length) { _ -> ' ' }.joinToString("")
