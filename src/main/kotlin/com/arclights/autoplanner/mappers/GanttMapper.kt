@@ -15,5 +15,10 @@ class GanttMapper {
     private fun mapTasks(taskToStart: Map<TaskConfig, IntVar>): List<Task> =
         taskToStart.map { mapTask(it.key, it.value) }
 
-    private fun mapTask(taskConfig: TaskConfig, start: IntVar) = Task(taskConfig.name, start.value(), taskConfig.length)
+    private fun mapTask(taskConfig: TaskConfig, start: IntVar) = Task(
+        taskConfig.name,
+        start.value(),
+        taskConfig.length,
+        taskConfig.requiredResources
+    )
 }

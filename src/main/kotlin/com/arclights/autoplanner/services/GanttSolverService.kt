@@ -7,18 +7,27 @@ import com.arclights.autoplanner.models.RelationConstraint
 import com.arclights.autoplanner.models.RelationConstraintType
 import com.arclights.autoplanner.models.ResourceAllocationConfig
 import com.arclights.autoplanner.models.TaskConfig
+import com.arclights.autoplanner.printResult
 import jakarta.inject.Singleton
-import org.jacop.constraints.Count
+import org.jacop.constraints.And
+import org.jacop.constraints.IfThenElse
 import org.jacop.constraints.Max
+import org.jacop.constraints.Or
+import org.jacop.constraints.Sum
+import org.jacop.constraints.XeqC
 import org.jacop.constraints.XgtY
+import org.jacop.constraints.XgteqC
 import org.jacop.constraints.XlteqC
 import org.jacop.constraints.XplusCeqZ
 import org.jacop.core.IntVar
 import org.jacop.core.Store
+import org.jacop.core.Var
 import org.jacop.search.DepthFirstSearch
 import org.jacop.search.IndomainMin
+import org.jacop.search.Search
 import org.jacop.search.SelectChoicePoint
 import org.jacop.search.SimpleSelect
+import org.jacop.search.SimpleSolutionListener
 
 
 @Singleton
@@ -26,18 +35,53 @@ class GanttSolverService(private val ganttMapper: GanttMapper) {
 
     fun calculate(ganttConfig: GanttConfig): GanttResult {
         val (store, vars, cost, taskToStart) = setup(ganttConfig)
-        solve(store, vars, cost)
+        solve(store, vars, cost, taskToStart)
         return ganttMapper.mapResult(taskToStart)
     }
 
-    private fun solve(store: Store, vars: List<IntVar>, cost: IntVar) {
+    private fun solve(store: Store, vars: List<IntVar>, cost: IntVar, taskToStart: Map<TaskConfig, IntVar>) {
+        println("Solving...")
+        println("Number of variables: ${vars.size}")
         val t1: Long = System.currentTimeMillis()
 
         val select: SelectChoicePoint<IntVar> = SimpleSelect(vars.toTypedArray(), null, IndomainMin())
 
+        class TaskPrintOutListener<T : Var>() : SimpleSolutionListener<T>() {
+            override fun executeAfterSolution(search: Search<T>, select: SelectChoicePoint<T>): Boolean {
+                val parent = super.executeAfterSolution(search, select)
+
+                search.costVariable?.also { println("Solution cost $it") }
+
+                if (noSolutions > 1) {
+                    println("No of solutions : $noSolutions")
+                    println("Last Solution :")
+                } else {
+                    println("Solution :")
+                }
+
+                var solutionIndex = 0
+
+                if (isRecordingSolutions) solutionIndex = noSolutions - 1
+
+                vars.forEachIndexed { i, variable ->
+                    println("${variable.id}=${solutions[solutionIndex][i]}")
+                }
+                println()
+
+                printResult(ganttMapper.mapResult(taskToStart))
+                println()
+
+                return parent
+            }
+        }
+
         val search = DepthFirstSearch<IntVar>()
+        search.solutionListener = TaskPrintOutListener()
+        search.solutionListener.searchAll(true)
+        search.solutionListener.recordSolutions(true)
 
         val result: Boolean = search.labeling(store, select, cost)
+
 
         if (result) store.print()
 
@@ -47,6 +91,7 @@ class GanttSolverService(private val ganttMapper: GanttMapper) {
     }
 
     private fun setup(ganttConfig: GanttConfig): Setup {
+        println("Setting up the constrains...")
         val store = Store()
 
         val (resourceAllocations, tasks) = ganttConfig
@@ -54,24 +99,24 @@ class GanttSolverService(private val ganttMapper: GanttMapper) {
         val vars = mutableListOf<IntVar>()
 
         val worstCaseEnd = tasks.sumOf { it.length }
+        println("Worst case end: $worstCaseEnd")
 
-        val initIntVar = { name: String -> IntVar(store, name, 0, worstCaseEnd).also(vars::add) }
+        val initIntVar = { name: String, min: Int, max: Int -> IntVar(store, name, min, max).also(vars::add) }
+        val initTimeIntVar = { name: String -> initIntVar(name, 0, worstCaseEnd) }
 
-        val tasksToVars = tasks.associateWith { task -> setupTask(store, task, initIntVar) }
+        val tasksToStartAndEnd = tasks.associateWith { task -> setupTask(store, task, initTimeIntVar) }
 
-        val tasksToStart = tasksToVars.mapValues { (_, taskVars) -> taskVars.first() }
-        val taskIdsToStart = tasksToStart.mapKeys { it.key.id }
-        val taskIdsToEnd = tasksToVars.mapValues { (_, taskVars) -> taskVars.last() }.mapKeys { (task, _) -> task.id }
+        val taskIdToStartAndEnd = tasksToStartAndEnd.mapKeys { it.key.id }
+        val tasksToStart = tasksToStartAndEnd.mapValues { (_, startAndEnd) -> startAndEnd.start }
 
-        val taskEnds = taskIdsToEnd.map(Map.Entry<String, IntVar>::value)
+        val taskEnds = tasksToStartAndEnd.values.map { it.end }
 
-        val lastTaskEnd = initIntVar("Last task end")
+        val lastTaskEnd = initTimeIntVar("Last task end")
         store.impose(Max(taskEnds, lastTaskEnd))
 
-        val taskVars = tasksToVars.values.flatten()
-        setupResourceConstraints(store, resourceAllocations, taskVars, initIntVar)
+        setupResourceConstraints(store, resourceAllocations, tasksToStartAndEnd, initIntVar)
 
-        setupRelationshipConstraints(store, tasks, taskIdsToStart, taskIdsToEnd)
+        setupRelationshipConstraints(store, tasks, taskIdToStartAndEnd)
 
         return Setup(store, vars, lastTaskEnd, tasksToStart)
     }
@@ -79,29 +124,23 @@ class GanttSolverService(private val ganttMapper: GanttMapper) {
     private fun setupTask(
         store: Store,
         taskConfig: TaskConfig,
-        initIntVar: (String) -> IntVar
-    ): List<IntVar> {
-        val vars = (0 until taskConfig.length).map { initIntVar("${taskConfig.name} $it") }
-        vars.reduce { previous, current ->
-            store.impose(XplusCeqZ(previous, 1, current))
-            current
-        }
+        initTimeIntVar: (String) -> IntVar
+    ): TaskSetup {
+        val start = initTimeIntVar("${taskConfig.name} start")
+        val end = initTimeIntVar("${taskConfig.name} end")
+        store.impose(XplusCeqZ(start, taskConfig.length, end))
 
-        vars.first().id = "${taskConfig.name} start"
-        vars.last().id = "${taskConfig.name} end"
-
-        return vars
+        return TaskSetup(start, end)
     }
 
     private fun setupRelationshipConstraints(
         store: Store,
         tasks: List<TaskConfig>,
-        taskIdsToStart: Map<String, IntVar>,
-        taskIdsToEnd: Map<String, IntVar>
+        taskIdToTaskSetup: Map<String, TaskSetup>
     ) {
         tasks.forEach { task ->
             task.relationConstraints.forEach { relationConstraint ->
-                setupRelationshipConstraint(store, task.id, relationConstraint, taskIdsToStart, taskIdsToEnd)
+                setupRelationshipConstraint(store, task.id, relationConstraint, taskIdToTaskSetup)
             }
         }
     }
@@ -110,20 +149,21 @@ class GanttSolverService(private val ganttMapper: GanttMapper) {
         store: Store,
         taskId: String,
         relationConstraint: RelationConstraint,
-        taskIdsToStart: Map<String, IntVar>,
-        taskIdsToEnd: Map<String, IntVar>
+        taskIdToTaskSetup: Map<String, TaskSetup>
     ) {
+        val fromTaskSetup = taskIdToTaskSetup.getValue(taskId)
+        val toTaskSetup = taskIdToTaskSetup.getValue(relationConstraint.taskIdRelationTo)
         when (relationConstraint.type) {
             RelationConstraintType.AFTER -> setupAfterRelationshipConstraint(
                 store,
-                taskIdsToStart.getValue(taskId),
-                taskIdsToEnd.getValue(relationConstraint.taskIdRelationTo)
+                fromTaskSetup.start,
+                toTaskSetup.end
             )
 
             RelationConstraintType.BEFORE -> setupBeforeRelationshipConstraint(
                 store,
-                taskIdsToEnd.getValue(taskId),
-                taskIdsToStart.getValue(relationConstraint.taskIdRelationTo)
+                fromTaskSetup.end,
+                toTaskSetup.start
             )
         }
     }
@@ -147,49 +187,129 @@ class GanttSolverService(private val ganttMapper: GanttMapper) {
     private fun setupResourceConstraints(
         store: Store,
         resourceAllocations: List<ResourceAllocationConfig>,
-        taskVars: List<IntVar>,
-        initIntVar: (String) -> IntVar
+        taskToStartAndEnds: Map<TaskConfig, TaskSetup>,
+        initIntVar: (String, Int, Int) -> IntVar
     ) {
         resourceAllocations.forEach { resourceAllocationConfig ->
             setupResourceConstraints(
                 store,
                 resourceAllocationConfig,
-                taskVars,
+                taskToStartAndEnds,
                 initIntVar
             )
+        }
+    }
+
+//    private fun setupResourceConstraints(
+//        store: Store,
+//        resourceAllocation: ResourceAllocationConfig,
+//        taskToStartAndEnds: Map<TaskConfig, TaskSetup>,
+//        initIntVar: (String, Int, Int) -> IntVar
+//    ) {
+//        val withinResourceAllocationOrNot = taskToStartAndEnds.values.map { (start, end) ->
+//            val isPartOfResourceAllocation = initIntVar(
+//                "Task ? is part of resource allocation ${resourceAllocation.timeUnitFrom}..${resourceAllocation.timeUnitUntil}",
+//                0,
+//                1
+//            )
+//            store.impose(
+//                IfThenElse(
+//                    Or(
+//                        listOf(
+//                            And(
+//                                XgteqC(start, resourceAllocation.timeUnitFrom),
+//                                XlteqC(start, resourceAllocation.timeUnitUntil)
+//                            ),
+//                            And(
+//                                XgteqC(end, resourceAllocation.timeUnitFrom),
+//                                XlteqC(end, resourceAllocation.timeUnitUntil)
+//                            )
+//                        )
+//                    ),
+//                    XeqC(isPartOfResourceAllocation, 1),
+//                    XeqC(isPartOfResourceAllocation, 0)
+//                )
+//            )
+//            isPartOfResourceAllocation
+//        }
+////        val indexSetInResourceAllocation = SetVar(store, "indexes set in resource allocation")
+////        Conditional(
+////            withinResourceAllocationOrNot,
+////            taskToStartAndEnds.values.indices.map {
+////                val indexVar = IntVar(store, "Index", it, it)
+////                XinA(indexVar, indexSetInResourceAllocation)
+////            }
+////        )
+//        val resourcesInAllocation = taskToStartAndEnds.values.indices.map {
+//            initIntVar("resource for task $it in allocation", 0, 100/*Better limit*/)
+//        }
+//        taskToStartAndEnds.keys.forEachIndexed { i, taskConfig ->
+//            store.impose(
+//                IfThenElse(
+//                    XeqC(withinResourceAllocationOrNot[i], 1),
+//                    XeqC(resourcesInAllocation[i], taskConfig.requiredResources),
+//                    XeqC(resourcesInAllocation[i], 0)
+//                )
+//            )
+//        }
+//
+//        val resourcesUsed = initIntVar("Resources used", 0, 100/*Better limit*/)
+//        store.impose(Sum(resourcesInAllocation, resourcesUsed))
+//        store.impose(XlteqC(resourcesUsed, resourceAllocation.nbrOfResources))
+//    }
+
+    private fun setupResourceConstraints(
+        store: Store,
+        resourceAllocation: ResourceAllocationConfig,
+        taskToStartAndEnds: Map<TaskConfig, TaskSetup>,
+        initIntVar: (String, Int, Int) -> IntVar
+    ) {
+        (resourceAllocation.timeUnitFrom..resourceAllocation.timeUnitUntil).forEach { time ->
+            setupResourceConstraints(store, time, resourceAllocation.nbrOfResources, taskToStartAndEnds, initIntVar)
         }
     }
 
     private fun setupResourceConstraints(
         store: Store,
-        resourceAllocation: ResourceAllocationConfig,
-        taskVars: List<IntVar>,
-        initIntVar: (String) -> IntVar
+        time: Int,
+        resourcesAvailable: Int,
+        taskToStartAndEnds: Map<TaskConfig, TaskSetup>,
+        initIntVar: (String, Int, Int) -> IntVar
     ) {
-        (resourceAllocation.timeUnitFrom..resourceAllocation.timeUnitUntil).forEach { timeUnit ->
-            setupResourceConstraint(
-                store,
-                timeUnit,
-                resourceAllocation.nbrOfResources,
-                taskVars,
-                initIntVar
+        val tasksPerformedAtTimeOrNot = taskToStartAndEnds.map { (task, startAndEnd) ->
+            val (start, end) = startAndEnd
+            val isPerformedAtTime = initIntVar(
+                "Task ${task.name} is performed at time $time",
+                0,
+                1
+            )
+            store.impose(
+                IfThenElse(
+                    And(
+                        XlteqC(start, time),
+                        XgteqC(end, time)
+                    ),
+                    XeqC(isPerformedAtTime, 1),
+                    XeqC(isPerformedAtTime, 0)
+                )
+            )
+            isPerformedAtTime
+        }
+        val resourcesUsedAtTime = taskToStartAndEnds.values.indices.map {
+            initIntVar("resources used for task $it at time $time", 0, 100/*Better limit*/)
+        }
+        taskToStartAndEnds.keys.forEachIndexed { i, taskConfig ->
+            store.impose(
+                IfThenElse(
+                    XeqC(tasksPerformedAtTimeOrNot[i], 1),
+                    XeqC(resourcesUsedAtTime[i], taskConfig.requiredResources),
+                    XeqC(resourcesUsedAtTime[i], 0)
+                )
             )
         }
-    }
-
-    /**
-     * Should not exceed the number of resources at a specific point in time
-     */
-    private fun setupResourceConstraint(
-        store: Store,
-        timeUnit: Int,
-        nbrOfResources: Int,
-        taskVars: List<IntVar>,
-        initIntVar: (String) -> IntVar
-    ) {
-        val resourceVar = initIntVar("Resources at time $timeUnit")
-        store.impose(Count(taskVars, resourceVar, timeUnit))
-        store.impose(XlteqC(resourceVar, nbrOfResources))
+        val totalResourcesUsedAtTime = initIntVar("Resources used at time $time", 0, 100/*Better limit*/)
+        store.impose(Sum(resourcesUsedAtTime, totalResourcesUsedAtTime))
+        store.impose(XlteqC(totalResourcesUsedAtTime, resourcesAvailable))
     }
 
     private data class Setup(
@@ -197,5 +317,10 @@ class GanttSolverService(private val ganttMapper: GanttMapper) {
         val vars: List<IntVar>,
         val lastTaskEnd: IntVar,
         val taskToStart: Map<TaskConfig, IntVar>
+    )
+
+    private data class TaskSetup(
+        val start: IntVar,
+        val end: IntVar
     )
 }

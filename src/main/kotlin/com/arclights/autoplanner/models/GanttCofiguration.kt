@@ -1,8 +1,10 @@
 package com.arclights.autoplanner.models
 
+import io.micronaut.core.annotation.Introspected
 import io.micronaut.serde.annotation.Serdeable
 
 @Serdeable
+@Introspected
 data class GanttConfig(
     val resourceAllocations: List<ResourceAllocationConfig>,
     val tasks: List<TaskConfig>
@@ -12,10 +14,12 @@ data class GanttConfig(
 data class ResourceAllocationConfig(val timeUnitFrom: Int, val timeUnitUntil: Int, val nbrOfResources: Int)
 
 @Serdeable
+@Introspected
 data class TaskConfig(
     val id: String,
     val name: String,
     val length: Int,
+    val requiredResources: Int,
     val timeScalar: TimeScalar?,
     val relationConstraints: List<RelationConstraint> = listOf()
 )

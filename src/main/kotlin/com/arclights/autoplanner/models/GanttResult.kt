@@ -10,5 +10,6 @@ data class Task(
 //    val id:String,
     val name: String,
     val start: Int,
-    val length: Int
+    val length: Int,
+    val resources:Int
 )
